@@ -38,8 +38,10 @@
 #include "MemoryController.h"
 #include "MemorySystem.h"
 #include "AddressMapping.h"
+#include <ctime>
 
 #define SEQUENTIAL(rank,bank) (rank*NUM_BANKS)+bank
+#define XFER_LATENCY BL/2
 
 /* Power computations are localized to MemoryController.cpp */ 
 extern unsigned IDD0;
@@ -108,6 +110,12 @@ MemoryController::MemoryController(MemorySystem *parent, CSVWriter &csvOut_, ost
 	{
 		refreshCountdown.push_back((int)((REFRESH_PERIOD/tCK)/NUM_RANKS)*(i+1));
 	}
+
+    /* Added by K.Z. */
+    prevDecodeT = 0;
+    isPrevRead = false;
+    prevAddr = 0;
+    srand((unsigned)time(NULL)); 
 }
 
 //get a bus packet from either data or cmd bus
@@ -126,8 +134,53 @@ void MemoryController::receiveFromBus(BusPacket *bpacket)
 		bpacket->print();
 	}
 
-	//add to return read data queue
+    /* commented by K.Z. 
 	returnTransaction.push_back(new Transaction(RETURN_DATA, bpacket->physicalAddress, bpacket->data));
+    //decodeFinishT.push_back(currentClockCycle + DEC_LATENCY);
+    */
+
+	//================== add a decoding queue before the returnTransaction queue ======================
+	decodeTransaction.push_back(new Transaction(RETURN_DATA, bpacket->physicalAddress, bpacket->data));
+    if( ECCEXIST )
+    {
+        prevDecodeT = prevDecodeT > currentClockCycle - XFER_LATENCY? prevDecodeT + tDecInterval: currentClockCycle + tDecInterval - XFER_LATENCY; 
+        prevDecodeT += tDecNormal;
+        unsigned tmp1 = rand() % 10000000;
+        unsigned tmp2 = rand() % 10000000;
+        unsigned tmp;
+        if( BL == 4 )
+            tmp = tmp1;
+        else 
+        {
+            if( tmp1 < pDec4 && tmp2 < pDec4 )
+                tmp = tmp1 > tmp2? tmp1 : tmp2;
+            else
+                tmp = tmp1 < tmp2? tmp1 : tmp2;
+        }
+        if( tmp < pDec1 )
+            prevDecodeT += tDecLat1;
+        else if( tmp < pDec2 )
+            prevDecodeT += tDecLat2;
+        else if( tmp < pDec3 )
+            prevDecodeT += tDecLat3;
+        else if( tmp < pDec4 )
+            prevDecodeT += tDecLat4;
+    } else
+        prevDecodeT = currentClockCycle;
+    //if( tmp < 4 )
+        //prevDecodeT += 43;
+    //else if( tmp < 144 )
+        //prevDecodeT += 56;
+    //else if( tmp < 4144 )
+        //prevDecodeT += 44;
+    //else if( tmp < 90844 )
+        //prevDecodeT += 19;
+
+    decodeFinishT.push_back(prevDecodeT);
+    //ERROR("bbbbb" << tDec_NoErr);
+    //====================================================================================================
+
+
 	totalReadsPerBank[SEQUENTIAL(bpacket->rank,bpacket->bank)]++;
 
 	// this delete statement saves a mindboggling amount of memory
@@ -249,7 +302,7 @@ void MemoryController::update()
 			}
 
 			outgoingDataPacket = writeDataToSend[0];
-			dataCyclesLeft = BL/2;
+			dataCyclesLeft = BL/2 ;
 
 			totalTransactions++;
 			totalWritesPerBank[SEQUENTIAL(writeDataToSend[0]->rank,writeDataToSend[0]->bank)]++;
@@ -658,6 +711,14 @@ void MemoryController::update()
 		}
 	}
 
+    // ======= check for decoded data packet to send it to returnTransaction queue =========
+    if (decodeTransaction.size()>0 && decodeFinishT[0]==currentClockCycle)
+    {
+        returnTransaction.push_back(new Transaction(RETURN_DATA, decodeTransaction[0]->address, decodeTransaction[0]->data));
+        delete decodeTransaction[0];
+        decodeTransaction.erase(decodeTransaction.begin());
+        decodeFinishT.erase(decodeFinishT.begin());
+    }
 	//check for outstanding data to return to the CPU
 	if (returnTransaction.size()>0)
 	{
@@ -769,6 +830,7 @@ bool MemoryController::addTransaction(Transaction *trans)
 {
 	if (WillAcceptTransaction())
 	{
+
 		trans->timeAdded = currentClockCycle;
 		transactionQueue.push_back(trans);
 		return true;
