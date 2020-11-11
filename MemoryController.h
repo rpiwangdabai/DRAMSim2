@@ -86,6 +86,16 @@ private:
 	vector<unsigned>refreshCountdown;
 	vector<BusPacket *> writeDataToSend;
 	vector<unsigned> writeDataCountdown;
+    // ====================================================================================
+    /* A decoding queue for data packet waiting for being decoded by E-BCH decoder
+       and a corresponding queue storing the clockCycle# when decoding finishes
+       Added by K.Z. August 11th */
+    vector<Transaction *> decodeTransaction;
+    vector<unsigned> decodeFinishT;
+    uint64_t prevDecodeT;
+    uint64_t prevAddr;
+    bool     isPrevRead;
+    // ====================================================================================
 	vector<Transaction *> returnTransaction;
 	vector<Transaction *> pendingReadTransactions;
 	map<unsigned,unsigned> latencies; // latencyValue -> latencyCount
